@@ -18,6 +18,13 @@ env/
 *.pth
 *.ckpt
 
+# Hydra / local runs
+outputs/
+multirun/
+
+# TinyShakespeare / tokenizer files produced by training scripts (not source)
+data/tinyshakespeare/
+
 # HuggingFace dataset cache
 ~/.cache/huggingface/
 .cache/
