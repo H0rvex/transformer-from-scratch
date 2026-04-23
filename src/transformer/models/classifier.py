@@ -10,6 +10,7 @@ from torch import Tensor
 from transformer.models.attention import RotaryEmbedding
 from transformer.models.init_weights import init_embedding, init_linear, scaled_residual_linear
 from transformer.models.layers import EncoderBlock
+from transformer.models.norm import RMSNorm
 from transformer.models.positional import LearnedPositionalEmbedding, SinusoidalPositionalEncoding
 
 
@@ -28,6 +29,10 @@ class TransformerClassifier(nn.Module):
         pos_encoding: str = "sinusoidal",  # sinusoidal | learned | none
         use_rope: bool = False,
         ffn_activation: str = "relu",
+        norm_type: str = "layer_norm",
+        num_kv_heads: int | None = None,
+        alibi: bool = False,
+        use_checkpoint: bool = False,
     ) -> None:
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, d_model, padding_idx=0)
@@ -49,6 +54,10 @@ class TransformerClassifier(nn.Module):
                     norm_first=norm_first,
                     rope=rope,
                     ffn_activation=ffn_activation,
+                    norm_type=norm_type,
+                    num_kv_heads=num_kv_heads,
+                    alibi=alibi,
+                    use_checkpoint=use_checkpoint,
                 )
                 for _ in range(num_layers)
             ]
@@ -65,13 +74,23 @@ class TransformerClassifier(nn.Module):
             init_linear(layer.attn.W_k)
             init_linear(layer.attn.W_v)
             scaled_residual_linear(layer.attn.W_o, n_layers)
-            init_linear(layer.ff.lin1)
-            scaled_residual_linear(layer.ff.lin2, n_layers)
+            ff = layer.ff
+            if ff.activation == "swiglu":
+                assert ff.w_gate is not None and ff.w_up is not None and ff.w_down is not None
+                init_linear(ff.w_gate)
+                init_linear(ff.w_up)
+                scaled_residual_linear(ff.w_down, n_layers)
+            else:
+                assert ff.lin1 is not None and ff.lin2 is not None
+                init_linear(ff.lin1)
+                scaled_residual_linear(ff.lin2, n_layers)
         init_linear(self.classifier)
         for m in self.modules():
             if isinstance(m, nn.LayerNorm):
                 nn.init.ones_(m.weight)
                 nn.init.zeros_(m.bias)
+            elif isinstance(m, RMSNorm):
+                nn.init.ones_(m.weight)
 
     def forward(self, x: Tensor) -> Tensor:
         attn_mask = (x != 0).unsqueeze(1).unsqueeze(2)

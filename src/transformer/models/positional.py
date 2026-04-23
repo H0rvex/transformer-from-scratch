@@ -32,10 +32,19 @@ class LearnedPositionalEmbedding(nn.Module):
 
     def __init__(self, max_len: int, d_model: int) -> None:
         super().__init__()
+        self.max_len = max_len
         self.emb = nn.Embedding(max_len, d_model)
 
     def forward(self, x: Tensor) -> Tensor:
         # x: (B, T, D) token embeddings
         b, t, d = x.shape
         pos = torch.arange(t, device=x.device)
+        return cast(Tensor, x + self.emb(pos).unsqueeze(0).expand(b, -1, -1))
+
+    def forward_with_offset(self, x: Tensor, position_offset: int) -> Tensor:
+        """Add positions ``position_offset .. position_offset + T - 1`` (for KV-cache decode)."""
+        b, t, _d = x.shape
+        pos = torch.arange(position_offset, position_offset + t, device=x.device)
+        if pos.max().item() >= self.max_len:
+            raise ValueError(f"position {pos.max().item()} >= max_len {self.max_len}")
         return cast(Tensor, x + self.emb(pos).unsqueeze(0).expand(b, -1, -1))
