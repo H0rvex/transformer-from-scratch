@@ -83,7 +83,6 @@ def load_gpt(ckpt: Path, tok_path: Path) -> tuple[GPTModel, object]:
     return m, tok
 
 
-@torch.no_grad()
 def gpt_gen(prompt: str, ckpt_path: str, tok_path: str, max_new: int, temperature: float) -> str:
     ckpt, tpath = Path(ckpt_path), Path(tok_path)
     if not ckpt.exists() or not tpath.exists():
@@ -93,14 +92,14 @@ def gpt_gen(prompt: str, ckpt_path: str, tok_path: str, max_new: int, temperatur
     model.to(device)
     ids = tok.encode(prompt).ids
     idx = torch.tensor([ids], dtype=torch.long, device=device)
-    block = model.block_size
-    for _ in range(int(max_new)):
-        idx_cond = idx[:, -block:]
-        logits = model(idx_cond)[:, -1, :] / max(float(temperature), 1e-6)
-        probs = torch.softmax(logits, dim=-1)
-        next_id = torch.multinomial(probs, num_samples=1)
-        idx = torch.cat([idx, next_id], dim=1)
-    return tok.decode(idx[0].tolist())
+    out = model.generate(
+        idx,
+        max_new_tokens=int(max_new),
+        temperature=float(temperature),
+        top_k=50,
+        use_kv_cache=True,
+    )
+    return tok.decode(out[0].tolist())
 
 
 def main() -> None:
