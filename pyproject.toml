@@ -41,6 +41,9 @@ dev = [
     "types-tqdm",
 ]
 app = ["gradio>=4.0.0"]
+gpu = [
+    "triton>=3.0.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
