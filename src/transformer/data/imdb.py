@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections import Counter
+from typing import Any
 
 import torch
 from datasets import load_dataset
 from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.distributed import DistributedSampler
 
 ClfBatch = tuple[torch.Tensor, torch.Tensor]
 
@@ -47,6 +49,7 @@ def get_imdb_dataloaders(
     batch_size: int = 32,
     max_len: int = 256,
     num_workers: int = 0,
+    distributed: bool = False,
 ) -> tuple[DataLoader[ClfBatch], DataLoader[ClfBatch], dict[str, int]]:
     dataset = load_dataset("imdb")
     train_texts = list(dataset["train"]["text"])
@@ -58,7 +61,11 @@ def get_imdb_dataloaders(
     train_ds = IMDBDataset(train_texts, train_labels, vocab, max_len)
     test_ds = IMDBDataset(test_texts, test_labels, vocab, max_len)
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    if distributed:
+        sampler: DistributedSampler[Any] = DistributedSampler(train_ds, shuffle=True)
+        train_loader = DataLoader(train_ds, batch_size=batch_size, sampler=sampler, num_workers=num_workers)
+    else:
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
     return train_loader, test_loader, vocab

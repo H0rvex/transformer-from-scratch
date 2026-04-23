@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import requests
 import torch
 from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.distributed import DistributedSampler
 
 from transformer.data.tokenizers import encode_file_to_memmap, load_tokenizer, train_bpe_tokenizer
 
@@ -85,10 +87,15 @@ def get_tinyshakespeare_dataloaders(
     batch_size: int,
     vocab_size: int = 2048,
     num_workers: int = 0,
+    distributed: bool = False,
 ) -> tuple[DataLoader[LmBatch], DataLoader[LmBatch], int]:
     _, mem_path, vs = ensure_tinyshakespeare_artifacts(data_dir, vocab_size=vocab_size)
     train_ds = TinyShakespeareDataset(mem_path, block_size, "train")
     val_ds = TinyShakespeareDataset(mem_path, block_size, "val")
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    if distributed:
+        sampler: DistributedSampler[Any] = DistributedSampler(train_ds, shuffle=True)
+        train_loader = DataLoader(train_ds, batch_size=batch_size, sampler=sampler, num_workers=num_workers)
+    else:
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
     return train_loader, val_loader, vs

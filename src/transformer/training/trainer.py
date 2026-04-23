@@ -1,4 +1,4 @@
-"""Shared training loop: classifier or LM with AMP, compile, logging, checkpoints."""
+"""Shared training loop: classifier or LM with AMP, compile, logging, checkpoints, optional DDP."""
 
 from __future__ import annotations
 
@@ -12,12 +12,14 @@ from typing import Any, Literal, cast
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
-from torch.cuda.amp import GradScaler
+from torch.nn.parallel import DistributedDataParallel as DDP  # noqa: N817
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
 from transformer.training.callbacks import plot_loss_curve, save_classifier_plots
@@ -38,7 +40,7 @@ def configure_training_runtime_env() -> None:
     os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
 
-def _epoch_progress(loader: DataLoader[Any], desc: str) -> tqdm:
+def _epoch_progress(loader: DataLoader[Any], desc: str) -> Any:
     """
     tqdm that behaves in Hydra / narrow terminals: stable width, slower refresh,
     disabled when stderr is not a TTY (avoids glued \\r lines in log capture).
@@ -73,9 +75,20 @@ class Trainer:
         dtype_str = str(cfg.train.amp_dtype).lower()
         if dtype_str == "bf16":
             self.amp_dtype = torch.bfloat16
-        else:
+        elif dtype_str == "fp16":
             self.amp_dtype = torch.float16
-        self.use_scaler = self.amp_enabled and self.amp_dtype == torch.float16 and self.device.type == "cuda"
+        else:
+            self.amp_dtype = torch.float32
+        self.rank = int(os.environ.get("RANK", "0"))
+        self.world_size = int(os.environ.get("WORLD_SIZE", "1"))
+        self.use_cuda_amp = (
+            self.amp_enabled and self.device.type == "cuda" and dtype_str not in ("fp32", "float32")
+        )
+        self.use_scaler = self.use_cuda_amp and self.amp_dtype == torch.float16
+
+    @property
+    def is_main_process(self) -> bool:
+        return self.rank == 0
 
     def fit(
         self,
@@ -85,23 +98,37 @@ class Trainer:
     ) -> None:
         configure_training_runtime_env()
         set_seed(int(self.cfg.train.seed))
+
+        if self.world_size > 1 and not dist.is_initialized():
+            backend = "nccl" if self.device.type == "cuda" else "gloo"
+            dist.init_process_group(backend=backend)
+
         model = model.to(self.device)
         if bool(self.cfg.train.compile) and not self.cfg.train.get("resume") and hasattr(torch, "compile"):
             model = torch.compile(model, mode="reduce-overhead")  # type: ignore[assignment]
 
-        if self.task == "classifier":
-            self._fit_classifier(model, train_loader, val_loader)
-        else:
-            self._fit_lm(model, train_loader, val_loader)
+        if self.world_size > 1:
+            local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+            ddp_device: list[int] | None = [local_rank] if self.device.type == "cuda" else None
+            model = DDP(model, device_ids=ddp_device, output_device=local_rank if ddp_device else None)
+
+        try:
+            if self.task == "classifier":
+                self._fit_classifier(model, train_loader, val_loader)
+            else:
+                self._fit_lm(model, train_loader, val_loader)
+        finally:
+            if self.world_size > 1 and dist.is_initialized():
+                dist.destroy_process_group()
+
+    def _state_dict_for_save(self, model: nn.Module) -> dict[str, Any]:
+        m = model.module if isinstance(model, DDP) else model
+        return cast(dict[str, Any], m.state_dict())
 
     def _autocast(self) -> Any:
-        """CUDA autocast only; `torch.cuda.amp.autocast` has no `device_type` (that is `torch.autocast`)."""
-        if not self.amp_enabled or self.device.type != "cuda":
+        if not self.use_cuda_amp:
             return contextlib.nullcontext()
-        dtype = self.amp_dtype
-        if hasattr(torch, "autocast"):
-            return torch.autocast(device_type="cuda", dtype=dtype, enabled=True)
-        return torch.cuda.amp.autocast(enabled=True, dtype=dtype)
+        return torch.autocast(device_type="cuda", dtype=self.amp_dtype, enabled=True)
 
     def _fit_classifier(
         self,
@@ -117,7 +144,7 @@ class Trainer:
         )
         total_steps = max(1, int(cfg.train.epochs) * len(train_loader) // self.grad_accum)
         sched: LambdaLR = get_cosine_schedule_with_warmup(optim, int(cfg.train.warmup_steps), total_steps)
-        scaler = GradScaler(enabled=self.use_scaler)
+        scaler: Any = torch.amp.GradScaler("cuda", enabled=self.use_scaler)  # type: ignore[attr-defined]
         loss_fn = nn.CrossEntropyLoss()
         csv_path = self.output_dir / str(cfg.train.csv_log)
         logger = CSVLogger(
@@ -142,12 +169,19 @@ class Trainer:
         hist_tl: list[float] = []
         hist_va: list[float] = []
 
-        for epoch in range(start_epoch, int(cfg.train.epochs)):
+        epochs = int(cfg.train.epochs)
+        val_m: dict[str, Any] = {}
+
+        for epoch in range(start_epoch, epochs):
+            samp = train_loader.sampler
+            if isinstance(samp, DistributedSampler):
+                samp.set_epoch(epoch)
+
             model.train()
             running = 0.0
             n = 0
             optim.zero_grad(set_to_none=True)
-            pbar = _epoch_progress(train_loader, desc=f"epoch {epoch + 1}/{cfg.train.epochs}")
+            pbar = _epoch_progress(train_loader, desc=f"epoch {epoch + 1}/{epochs}")
             for step, (xb, yb) in enumerate(pbar):
                 xb = xb.to(self.device)
                 yb = yb.to(self.device)
@@ -175,23 +209,26 @@ class Trainer:
                 running += float(loss.item()) * self.grad_accum
                 n += 1
             avg_loss = running / max(1, n)
-            val_m = self._eval_classifier(model, val_loader, loss_fn)
-            acc = float(val_m["accuracy"])
-            f1v = float(val_m["f1_macro"])
-            logger.log({"epoch": epoch + 1, "train_loss": avg_loss, "val_acc": acc, "val_f1": f1v})
-            wandb_log({"train_loss": avg_loss, "val_acc": acc, "val_f1": f1v}, step=epoch + 1)
-            hist_ep.append(epoch + 1)
-            hist_tl.append(avg_loss)
-            hist_va.append(acc)
-            print(f"Epoch {epoch + 1}: loss={avg_loss:.4f} val_acc={acc:.4f} val_f1={f1v:.4f}")
 
-            if acc > best_acc:
-                best_acc = acc
-                torch.save(model.state_dict(), self.output_dir / "best_model.pt")
-            self._save_checkpoint(self.output_dir / "last.pt", model, optim, sched, scaler, epoch + 1, global_step)
+            if self.is_main_process:
+                val_m = self._eval_classifier(model, val_loader, loss_fn)
+                acc = float(val_m["accuracy"])
+                f1v = float(val_m["f1_macro"])
+                logger.log({"epoch": epoch + 1, "train_loss": avg_loss, "val_acc": acc, "val_f1": f1v})
+                wandb_log({"train_loss": avg_loss, "val_acc": acc, "val_f1": f1v}, step=epoch + 1)
+                hist_ep.append(epoch + 1)
+                hist_tl.append(avg_loss)
+                hist_va.append(acc)
+                print(f"Epoch {epoch + 1}: loss={avg_loss:.4f} val_acc={acc:.4f} val_f1={f1v:.4f}")
 
-        save_classifier_plots(val_m, self.output_dir / "docs_assets")
-        plot_loss_curve(hist_ep, hist_tl, hist_va, self.output_dir / "docs_assets" / "clf_curves.png", "val acc")
+                if acc > best_acc:
+                    best_acc = acc
+                    torch.save(self._state_dict_for_save(model), self.output_dir / "best_model.pt")
+                self._save_checkpoint(self.output_dir / "last.pt", model, optim, sched, scaler, epoch + 1, global_step)
+
+        if self.is_main_process and epochs > 0:
+            save_classifier_plots(val_m, self.output_dir / "docs_assets")
+            plot_loss_curve(hist_ep, hist_tl, hist_va, self.output_dir / "docs_assets" / "clf_curves.png", "val acc")
         wandb_finish()
 
     @torch.no_grad()
@@ -226,7 +263,7 @@ class Trainer:
         )
         total_steps = max(1, int(cfg.train.epochs) * len(train_loader) // self.grad_accum)
         sched = get_cosine_schedule_with_warmup(optim, int(cfg.train.warmup_steps), total_steps)
-        scaler = GradScaler(enabled=self.use_scaler)
+        scaler: Any = torch.amp.GradScaler("cuda", enabled=self.use_scaler)  # type: ignore[attr-defined]
 
         csv_path = self.output_dir / str(cfg.train.csv_log)
         logger = CSVLogger(csv_path, ["epoch", "train_loss", "val_loss", "val_ppl"])
@@ -248,7 +285,13 @@ class Trainer:
         hist_tl: list[float] = []
         hist_vl: list[float] = []
 
-        for epoch in range(start_epoch, int(cfg.train.epochs)):
+        epochs = int(cfg.train.epochs)
+
+        for epoch in range(start_epoch, epochs):
+            samp = train_loader.sampler
+            if isinstance(samp, DistributedSampler):
+                samp.set_epoch(epoch)
+
             model.train()
             running = 0.0
             n = 0
@@ -281,21 +324,24 @@ class Trainer:
                 running += float(loss.item()) * self.grad_accum
                 n += 1
 
-            val_loss, val_ppl = self._eval_lm(model, val_loader)
             avg_loss = running / max(1, n)
-            logger.log({"epoch": epoch + 1, "train_loss": avg_loss, "val_loss": val_loss, "val_ppl": val_ppl})
-            wandb_log({"train_loss": avg_loss, "val_loss": val_loss, "val_ppl": val_ppl}, step=epoch + 1)
-            hist_ep.append(epoch + 1)
-            hist_tl.append(avg_loss)
-            hist_vl.append(val_loss)
-            print(f"Epoch {epoch + 1}: train_loss={avg_loss:.4f} val_loss={val_loss:.4f} ppl={val_ppl:.2f}")
 
-            if val_loss < best_val:
-                best_val = val_loss
-                torch.save(model.state_dict(), self.output_dir / "best_model.pt")
-            self._save_checkpoint(self.output_dir / "last.pt", model, optim, sched, scaler, epoch + 1, global_step)
+            if self.is_main_process:
+                val_loss, val_ppl = self._eval_lm(model, val_loader)
+                logger.log({"epoch": epoch + 1, "train_loss": avg_loss, "val_loss": val_loss, "val_ppl": val_ppl})
+                wandb_log({"train_loss": avg_loss, "val_loss": val_loss, "val_ppl": val_ppl}, step=epoch + 1)
+                hist_ep.append(epoch + 1)
+                hist_tl.append(avg_loss)
+                hist_vl.append(val_loss)
+                print(f"Epoch {epoch + 1}: train_loss={avg_loss:.4f} val_loss={val_loss:.4f} ppl={val_ppl:.2f}")
 
-        plot_loss_curve(hist_ep, hist_tl, hist_vl, self.output_dir / "docs_assets" / "lm_curves.png", "val loss")
+                if val_loss < best_val:
+                    best_val = val_loss
+                    torch.save(self._state_dict_for_save(model), self.output_dir / "best_model.pt")
+                self._save_checkpoint(self.output_dir / "last.pt", model, optim, sched, scaler, epoch + 1, global_step)
+
+        if self.is_main_process and epochs > 0:
+            plot_loss_curve(hist_ep, hist_tl, hist_vl, self.output_dir / "docs_assets" / "lm_curves.png", "val loss")
         wandb_finish()
 
     def _save_checkpoint(
@@ -304,12 +350,12 @@ class Trainer:
         model: nn.Module,
         optim: torch.optim.Optimizer,
         sched: LambdaLR,
-        scaler: GradScaler,
+        scaler: Any,
         epoch: int,
         step: int,
     ) -> None:
         payload: dict[str, Any] = {
-            "model": model.state_dict(),
+            "model": self._state_dict_for_save(model),
             "optimizer": optim.state_dict(),
             "scheduler": sched.state_dict(),
             "epoch": epoch,
@@ -325,13 +371,14 @@ class Trainer:
         model: nn.Module,
         optim: torch.optim.Optimizer,
         sched: LambdaLR,
-        scaler: GradScaler,
+        scaler: Any,
     ) -> tuple[int, int]:
         try:
             ck = torch.load(path, map_location=self.device, weights_only=False)
         except TypeError:
             ck = torch.load(path, map_location=self.device)
-        model.load_state_dict(ck["model"])
+        m = model.module if isinstance(model, DDP) else model
+        m.load_state_dict(ck["model"])
         optim.load_state_dict(ck["optimizer"])
         sched.load_state_dict(ck["scheduler"])
         if ck.get("scaler") is not None and self.use_scaler:
