@@ -1,0 +1,5 @@
+data_dir: data/tinyshakespeare
+block_size: 256
+batch_size: 48
+vocab_bpe: 2048
+num_workers: 0

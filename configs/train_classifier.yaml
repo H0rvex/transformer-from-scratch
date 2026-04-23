@@ -1,0 +1,9 @@
+defaults:
+  - model: classifier
+  - data: imdb
+  - train: clf
+  - _self_
+
+hydra:
+  run:
+    dir: outputs/clf/${now:%Y-%m-%d}/${now:%H-%M-%S}

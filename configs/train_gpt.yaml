@@ -1,0 +1,9 @@
+defaults:
+  - model: gpt_small
+  - data: tinyshakespeare
+  - train: lm
+  - _self_
+
+hydra:
+  run:
+    dir: outputs/gpt/${now:%Y-%m-%d}/${now:%H-%M-%S}

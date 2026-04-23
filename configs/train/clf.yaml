@@ -1,0 +1,16 @@
+epochs: 20
+lr: 0.0001
+warmup_steps: 500
+weight_decay: 0.01
+grad_accum_steps: 1
+clip_norm: 1.0
+amp: false
+amp_dtype: fp32
+compile: false
+wandb: false
+wandb_project: transformer-fs
+wandb_run_name: null
+csv_log: metrics.csv
+seed: 42
+device: auto
+resume: null

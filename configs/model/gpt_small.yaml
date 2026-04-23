@@ -1,0 +1,10 @@
+# vocab_size set at runtime from tokenizer
+vocab_size: 2048
+d_model: 384
+num_heads: 6
+d_ff: 1536
+num_layers: 6
+block_size: 256
+dropout: 0.2
+norm_first: true
+use_rope: false
