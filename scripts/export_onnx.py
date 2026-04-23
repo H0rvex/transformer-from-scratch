@@ -16,6 +16,19 @@ from transformer.models.classifier import TransformerClassifier
 from transformer.models.gpt import GPTModel
 
 
+class _OnnxGPTWrapper(torch.nn.Module):
+    """Single ``input_ids`` forward for ONNX (no KV-cache)."""
+
+    def __init__(self, core: GPTModel) -> None:
+        super().__init__()
+        self.core = core
+
+    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+        out = self.core(input_ids, past_kv_layers=None, use_cache=False, position_offset=0)
+        assert isinstance(out, torch.Tensor)
+        return out
+
+
 def _onnx_export(
     model: torch.nn.Module,
     args: tuple[torch.Tensor, ...],
@@ -54,9 +67,9 @@ def main() -> None:
         d_ff=128,
         num_layers=2,
         num_classes=2,
-        max_len=32,
+        max_len=512,
     ).eval()
-    x = torch.randint(0, 128, (2, 32), dtype=torch.long)
+    x = torch.randint(0, 128, (2, 128), dtype=torch.long)
     clf_path = args.out_dir / "classifier.onnx"
     _onnx_export(
         clf,
@@ -75,16 +88,18 @@ def main() -> None:
     print(f"classifier: max |ONNX - PT| = {err:.6g}")
     assert err < args.atol
 
-    gpt = GPTModel(
-        vocab_size=256,
-        d_model=64,
-        num_heads=4,
-        d_ff=128,
-        num_layers=2,
-        block_size=32,
-        dropout=0.0,
-        norm_first=True,
-        use_rope=False,
+    gpt = _OnnxGPTWrapper(
+        GPTModel(
+            vocab_size=256,
+            d_model=64,
+            num_heads=4,
+            d_ff=128,
+            num_layers=2,
+            block_size=32,
+            dropout=0.0,
+            norm_first=True,
+            use_rope=False,
+        )
     ).eval()
     xi = torch.randint(0, 256, (2, 16), dtype=torch.long)
     gpt_path = args.out_dir / "gpt.onnx"
@@ -100,7 +115,7 @@ def main() -> None:
     sess_g = ort.InferenceSession(str(gpt_path), providers=["CPUExecutionProvider"])
     ort_g = sess_g.run(None, {"input_ids": xi.numpy()})[0]
     with torch.no_grad():
-        pt_g = gpt(xi).numpy()
+        pt_g = gpt(xi).numpy()  # wrapper forward
     err_g = float(np.max(np.abs(ort_g - pt_g)))
     print(f"gpt: max |ONNX - PT| = {err_g:.6g}")
     assert err_g < args.atol

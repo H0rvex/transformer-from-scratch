@@ -12,29 +12,6 @@ from transformer.data.tokenizers import load_tokenizer
 from transformer.models.gpt import GPTModel
 
 
-@torch.no_grad()
-def sample(
-    model: torch.nn.Module,
-    idx: torch.Tensor,
-    max_new_tokens: int,
-    temperature: float,
-    top_k: int | None,
-) -> torch.Tensor:
-    model.eval()
-    block = int(model.block_size)  # type: ignore[attr-defined]
-    for _ in range(max_new_tokens):
-        idx_cond = idx[:, -block:]
-        logits = model(idx_cond)
-        logits = logits[:, -1, :] / max(temperature, 1e-6)
-        if top_k is not None and top_k > 0:
-            v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-            logits = logits.masked_fill(logits < v[:, [-1]], float("-inf"))
-        probs = torch.softmax(logits, dim=-1)
-        next_token = torch.multinomial(probs, num_samples=1)
-        idx = torch.cat([idx, next_token], dim=1)
-    return idx
-
-
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--checkpoint", type=Path, default=Path("best_model.pt"))
@@ -43,6 +20,8 @@ def main() -> None:
     p.add_argument("--max-new-tokens", type=int, default=200)
     p.add_argument("--temperature", type=float, default=0.9)
     p.add_argument("--top-k", type=int, default=50)
+    p.add_argument("--top-p", type=float, default=None)
+    p.add_argument("--no-kv-cache", action="store_true", help="Disable KV-cache (slower reference)")
     p.add_argument("--out", type=Path, default=Path("docs/assets/generations.md"))
     p.add_argument("--d-model", type=int, default=384)
     p.add_argument("--heads", type=int, default=6)
@@ -74,12 +53,13 @@ def main() -> None:
 
     ids = tok.encode(args.prompt).ids
     idx = torch.tensor([ids], dtype=torch.long, device=device)
-    out_ids = sample(
-        model,
+    out_ids = model.generate(
         idx,
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
         top_k=args.top_k,
+        top_p=args.top_p,
+        use_kv_cache=not args.no_kv_cache,
     )
     text = tok.decode(out_ids[0].tolist())
     args.out.parent.mkdir(parents=True, exist_ok=True)

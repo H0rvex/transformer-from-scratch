@@ -13,7 +13,34 @@ from transformer.models.classifier import TransformerClassifier
 from transformer.training.trainer import Trainer
 
 
-def _tiny_cfg(epochs: int, lr: float, norm_first: bool, pos: str, use_rope: bool) -> object:
+def _tiny_cfg(
+    epochs: int,
+    lr: float,
+    norm_first: bool,
+    pos: str,
+    use_rope: bool,
+    *,
+    norm_type: str = "layer_norm",
+    num_kv_heads: int | None = None,
+    ffn_activation: str = "relu",
+    alibi: bool = False,
+) -> object:
+    md = {
+        "d_model": 32,
+        "num_heads": 4,
+        "d_ff": 64,
+        "num_layers": 2,
+        "num_classes": 2,
+        "dropout": 0.0,
+        "max_len": 16,
+        "norm_first": norm_first,
+        "pos_encoding": pos,
+        "use_rope": use_rope,
+        "ffn_activation": ffn_activation,
+        "norm_type": norm_type,
+        "num_kv_heads": num_kv_heads,
+        "alibi": alibi,
+    }
     return OmegaConf.create(
         {
             "train": {
@@ -33,20 +60,9 @@ def _tiny_cfg(epochs: int, lr: float, norm_first: bool, pos: str, use_rope: bool
                 "seed": 0,
                 "device": "cpu",
                 "resume": None,
+                "grad_ckpt": False,
             },
-            "model": {
-                "d_model": 32,
-                "num_heads": 4,
-                "d_ff": 64,
-                "num_layers": 2,
-                "num_classes": 2,
-                "dropout": 0.0,
-                "max_len": 16,
-                "norm_first": norm_first,
-                "pos_encoding": pos,
-                "use_rope": use_rope,
-                "ffn_activation": "relu",
-            },
+            "model": md,
             "data": {"batch_size": 4, "max_len": 16, "num_workers": 0},
         }
     )
@@ -64,6 +80,8 @@ def run_case(name: str, cfg: object, out_dir: Path) -> float:
     train_ds, val_ds = _synthetic_loaders()
     train_loader = torch.utils.data.DataLoader(train_ds, batch_size=4, shuffle=True)
     val_loader = torch.utils.data.DataLoader(val_ds, batch_size=4, shuffle=False)
+    nkv = cfg.model.get("num_kv_heads")
+    num_kv_heads = None if nkv is None else int(nkv)
     model = TransformerClassifier(
         vocab_size=60,
         d_model=int(cfg.model.d_model),
@@ -77,10 +95,12 @@ def run_case(name: str, cfg: object, out_dir: Path) -> float:
         pos_encoding=str(cfg.model.pos_encoding),
         use_rope=bool(cfg.model.use_rope),
         ffn_activation=str(cfg.model.ffn_activation),
+        norm_type=str(cfg.model.get("norm_type", "layer_norm")),
+        num_kv_heads=num_kv_heads,
+        alibi=bool(cfg.model.get("alibi", False)),
     )
     t = Trainer(cfg, "classifier", output_dir=out_dir / name)
     t.fit(model, train_loader, val_loader)
-    # read last val acc from printed? simpler: eval here
     model.eval()
     correct = 0
     total = 0
@@ -108,6 +128,9 @@ def main() -> None:
         ("pre_ln_sinusoidal", _tiny_cfg(args.epochs, 3e-3, True, "sinusoidal", False)),
         ("pre_ln_learned", _tiny_cfg(args.epochs, 3e-3, True, "learned", False)),
         ("pre_ln_rope", _tiny_cfg(args.epochs, 3e-3, True, "none", True)),
+        ("pre_ln_rmsnorm", _tiny_cfg(args.epochs, 3e-3, True, "sinusoidal", False, norm_type="rmsnorm")),
+        ("pre_ln_swiglu", _tiny_cfg(args.epochs, 3e-3, True, "sinusoidal", False, ffn_activation="swiglu")),
+        ("gqa_kv2", _tiny_cfg(args.epochs, 3e-3, True, "sinusoidal", False, num_kv_heads=2)),
     ]
     for name, cfg in cases:
         acc = run_case(name, cfg, base)
@@ -117,7 +140,7 @@ def main() -> None:
         "# Ablations (synthetic sanity)",
         "",
         "Short runs on a fixed synthetic binary dataset (CPU) to compare **pre-LN vs post-LN**,",
-        "**positional encoding variants**, and **RoPE** at tiny width.",
+        "**positional encoding variants**, **RoPE**, **RMSNorm**, **SwiGLU**, and **GQA** at tiny width.",
         "",
         "| setting | val accuracy |",
         "|---|---:|",
