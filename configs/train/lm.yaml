@@ -14,3 +14,4 @@ csv_log: metrics.csv
 seed: 42
 device: auto
 resume: null
+grad_ckpt: false

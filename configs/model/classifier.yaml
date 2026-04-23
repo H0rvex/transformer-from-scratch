@@ -10,3 +10,6 @@ norm_first: false
 pos_encoding: sinusoidal
 use_rope: false
 ffn_activation: relu
+norm_type: layer_norm
+num_kv_heads: null
+alibi: false

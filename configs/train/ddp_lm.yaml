@@ -1,0 +1,4 @@
+# Same as lm.yaml; use multi-GPU with: torchrun --nproc_per_node=N scripts/train_gpt.py train=ddp_lm
+defaults:
+  - lm
+  - _self_

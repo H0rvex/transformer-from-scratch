@@ -8,3 +8,7 @@ block_size: 256
 dropout: 0.2
 norm_first: true
 use_rope: false
+norm_type: layer_norm
+num_kv_heads: null
+ffn_activation: gelu
+use_alibi: false
