@@ -1,77 +1,147 @@
-# Transformer Sentiment Classifier
+# Transformer from scratch (PyTorch)
 
-A Transformer encoder built **from scratch** in PyTorch, trained for binary sentiment classification on the [IMDB dataset](https://huggingface.co/datasets/imdb).
+Encoder-only **IMDB sentiment** classifier and **decoder-only GPT** on TinyShakespeare, built without Hugging Face `transformers` — multi-head attention, masks, training loop, Hydra configs, tests, ONNX export, and profiling scripts.
 
-No `transformers` library — every component (multi-head attention, positional encoding, encoder layers) is implemented directly with `torch.nn`.
+## Results (fill after your GPU runs)
 
----
+| Model | Primary metric | Params | Tokens/sec (attn bench) | Peak VRAM |
+|------|----------------|--------|-------------------------|-----------|
+| IMDB classifier | test accuracy | — | — | — |
+| TinyShakespeare GPT | val loss / PPL | — | — | — |
+
+Regenerate the attention table with `python scripts/benchmark.py`. Training metrics land under Hydra `outputs/…` as `metrics.csv`.
 
 ## Architecture
 
+```mermaid
+flowchart LR
+  subgraph shared [Shared blocks]
+    MHA[MultiHeadAttention SDPA plus manual fallback]
+    FF[FeedForward]
+    LN[LayerNorm pre or post]
+  end
+  subgraph clf [IMDB classifier]
+    Tok[Whitespace tokens] --> Enc[N x EncoderBlock]
+    Enc --> Pool[Masked mean pool]
+    Pool --> Head[Linear 2-way]
+  end
+  subgraph gpt [TinyShakespeare GPT]
+    BPE[BPE tokenizer] --> Dec[N x DecoderBlock causal]
+    Dec --> LNf[Final LN]
+    LNf --> LM[LM head tied to embeddings]
+  end
+  shared --> Enc
+  shared --> Dec
 ```
-Input tokens
-    └─ Token Embedding + Sinusoidal Positional Encoding
-         └─ N × Encoder Layer
-               ├─ Multi-Head Self-Attention  (with padding mask)
-               ├─ Add & LayerNorm
-               ├─ Feed-Forward Network  (Linear → ReLU → Linear)
-               └─ Add & LayerNorm
-         └─ Masked Mean Pooling  (ignores <pad> tokens)
-              └─ Linear Classifier  → 2 logits (pos / neg)
-```
-
-| Hyperparameter | Value |
-|---|---|
-| `d_model` | 128 |
-| `num_heads` | 4 |
-| `d_ff` | 512 |
-| `num_layers` | 4 |
-| `vocab_size` | 20,002 |
-| `max_len` | 256 |
-| `dropout` | 0.1 |
-| `epochs` | 20 |
-| `lr` | 1e-4 (cosine decay w/ warmup) |
-
----
-
-## Project Structure
-
-```
-transformer/
-├── model.py      # MultiHeadAttention, EncoderLayer, TransformerClassifier
-├── data.py       # Vocabulary building, IMDB dataset & dataloaders
-├── config.py     # All hyperparameters in one place
-├── train.py      # Training loop, evaluation, model checkpointing
-└── requirements.txt
-```
-
----
 
 ## Quickstart
 
-```bash
-# 1. Install dependencies
-pip install -r requirements.txt
+Requires **Python 3.10+** (3.10 is fully supported; CI uses 3.10).
 
-# 2. Train (downloads IMDB automatically via HuggingFace datasets)
-python train.py
+### CUDA: `no kernel image for execution on device`
+
+That error means the **installed PyTorch binary does not include GPU kernels for your GPU’s compute capability** (or you have a CPU-only build). It is not a bug in this repo’s Python code.
+
+1. Run `nvidia-smi` and note the **CUDA version** the driver supports (top right).
+2. Reinstall PyTorch from [pytorch.org](https://pytorch.org/get-started/locally/) choosing a **wheel CUDA ≤ that driver CUDA** (e.g. cu121, cu124). Example for CUDA 12.x driver:
+
+   `pip install --force-reinstall torch --index-url https://download.pytorch.org/whl/cu121`
+
+3. Smoke-test: `python scripts/cuda_smoke.py`
+4. If it still fails on a **brand-new GPU**, upgrade PyTorch to the **latest** stable release (wheels add new `sm_*` targets over time).
+5. Workaround: train on CPU with `train.device=cpu` (Hydra override).
+
+If you use `torch.compile`, try `train.compile=false` on older or quirky setups.
+
+### Training looks like “hundreds of threads” or tqdm glitches
+
+Hydra or narrow terminals can make **tqdm** redraw badly (many `epoch N` fragments on one line). The trainer now refreshes more slowly, uses a fixed bar width, and **disables tqdm when stderr is not a TTY**. It also sets `TOKENIZERS_PARALLELISM=false` and caps BLAS/OpenMP threads by default so tokenizers + NumPy do not spawn large thread pools. To use all CPU cores for something else, export `OMP_NUM_THREADS` / `MKL_NUM_THREADS` before launching.
+
+```bash
+python -m pip install -U pip
+pip install -e ".[dev]"
+# optional UI
+pip install -e ".[app]"
 ```
 
-Training prints loss and accuracy after each epoch and saves the best checkpoint to `best_model.pt`.
+**Train classifier (Hydra):**
 
----
+```bash
+python scripts/train_classifier.py
+```
 
-## Key Implementation Details
+**Train GPT:**
 
-- **Sinusoidal positional encoding** — fixed (not learned), following *Attention Is All You Need*.
-- **Padding mask** — propagated through all attention layers so `<pad>` tokens never contribute to attention scores or the final pooled representation.
-- **Masked mean pooling** — the sequence representation is the average of non-padding token embeddings, which is more stable than using the `[CLS]` position for a model trained from scratch.
-- **Cosine LR schedule with linear warmup** — stabilises early training and improves convergence.
-- **Gradient clipping** (`max_norm=1.0`) — prevents exploding gradients.
+```bash
+python scripts/train_gpt.py
+```
 
----
+**Generate text** (expects `best_model.pt` and `data/tinyshakespeare/tokenizer.json`):
+
+```bash
+python scripts/generate.py --prompt "ROMEO:" --checkpoint best_model.pt
+```
+
+**Gradio demo** (two tabs: sentiment + GPT):
+
+```bash
+python app/gradio_app.py
+```
+
+**Docker** (CUDA base image; default command runs CPU-safe tests):
+
+```bash
+docker build -t transformer-fs .
+docker run --rm transformer-fs
+# With GPU for training inside the container:
+# docker run --gpus all -v "$PWD/outputs:/app/outputs" -it transformer-fs bash
+```
+
+## Project layout
+
+| Path | Role |
+|------|------|
+| [src/transformer/models/](src/transformer/models/) | Attention, blocks, classifier, GPT |
+| [src/transformer/data/](src/transformer/data/) | IMDB loaders, TinyShakespeare + BPE |
+| [src/transformer/training/](src/transformer/training/) | Trainer (AMP, compile, CSV, W&B, checkpoints) |
+| [configs/](configs/) | Hydra defaults for both tasks |
+| [scripts/](scripts/) | train, generate, benchmark, profiler, ONNX, viz, ablations |
+| [tests/](tests/) | Masking, PE math, MHA vs `torch.nn`, overfit smoke, ONNX |
+| [docs/](docs/) | Model cards, benchmark / ablation templates |
+
+## Tooling
+
+- **Ruff** lint + format, **mypy** strict on `src/transformer`, **pytest** in CI (`.github/workflows/ci.yml`).
+- **Hydra** run dirs under `outputs/` (gitignored).
+- **Weights & Biases**: set `train.wandb=true` in a Hydra override or compose config; offline: `WANDB_MODE=offline`.
+
+## Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/train_classifier.py` | Hydra IMDB training |
+| `scripts/train_gpt.py` | Hydra LM training |
+| `scripts/generate.py` | Sample from GPT checkpoint |
+| `scripts/benchmark.py` | Attention forward timing → `docs/BENCHMARKS.md` |
+| `scripts/torch_profiler.py` | Chrome trace export (renamed to avoid stdlib `profile` shadowing) |
+| `scripts/export_onnx.py` | ONNX + ORT numeric check |
+| `scripts/viz_attention.py` | Attention heatmaps → `docs/assets/attention/` |
+| `scripts/ablate.py` | Quick synthetic ablations → `docs/ABLATIONS.md` |
+
+## Design choices
+
+- **SDPA first**, manual attention when `return_attn_weights=True` (visualization) or if SDPA raises.
+- **Pre-LN vs post-LN** exposed on blocks for ablations; GPT defaults to pre-LN.
+- **Padding + causal masks** unified in `MultiHeadAttention`.
+- **GPT weight tying** between token embedding and LM head.
+- **AMP**: bf16 on CUDA when enabled; fp16 uses `GradScaler`.
+
+## ONNX and TensorRT
+
+`python scripts/export_onnx.py` writes `docs/assets/onnx/` and checks ORT vs PyTorch logits (`atol=1e-4`). For NVIDIA deployment, compile the exported ONNX with [TensorRT](https://developer.nvidia.com/tensorrt) using the versioned CLI or `trtexec` from your TensorRT install.
 
 ## References
 
-- Vaswani et al., [*Attention Is All You Need*](https://arxiv.org/abs/1706.03762) (2017)
-- Maas et al., [*Learning Word Vectors for Sentiment Analysis*](https://aclanthology.org/P11-1015/) — IMDB dataset
+- Vaswani et al., [*Attention Is All You Need*](https://arxiv.org/abs/1706.03762)
+- IMDB: Maas et al., [*Learning Word Vectors for Sentiment Analysis*](https://aclanthology.org/P11-1015/)
+- TinyShakespeare corpus (Karpathy char-rnn mirror) for LM demos
