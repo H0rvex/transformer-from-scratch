@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from collections import Counter
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -28,11 +30,7 @@ class IMDBDataset(Dataset[ClfBatch]):
         return torch.tensor(tokens, dtype=torch.long), torch.tensor(self.labels[idx], dtype=torch.long)
 
     def _encode(self, text: str) -> list[int]:
-        words = text.lower().split()
-        tokens = [self.vocab.get(w, 1) for w in words]
-        tokens = tokens[: self.max_len]
-        tokens += [0] * (self.max_len - len(tokens))
-        return tokens
+        return encode_text(text, self.vocab, self.max_len)
 
 
 def build_vocab(texts: list[str], vocab_size: int = 20000) -> dict[str, int]:
@@ -43,6 +41,26 @@ def build_vocab(texts: list[str], vocab_size: int = 20000) -> dict[str, int]:
     vocab["<pad>"] = 0
     vocab["<unk>"] = 1
     return vocab
+
+
+def save_vocab(vocab: dict[str, int], path: Path | str) -> Path:
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(vocab, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return out
+
+
+def load_vocab(path: Path | str) -> dict[str, int]:
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    return {str(k): int(v) for k, v in raw.items()}
+
+
+def encode_text(text: str, vocab: dict[str, int], max_len: int) -> list[int]:
+    words = text.lower().split()
+    tokens = [vocab.get(w, 1) for w in words]
+    tokens = tokens[:max_len]
+    tokens += [0] * (max_len - len(tokens))
+    return tokens
 
 
 def get_imdb_dataloaders(

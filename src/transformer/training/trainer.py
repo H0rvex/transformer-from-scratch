@@ -81,9 +81,7 @@ class Trainer:
             self.amp_dtype = torch.float32
         self.rank = int(os.environ.get("RANK", "0"))
         self.world_size = int(os.environ.get("WORLD_SIZE", "1"))
-        self.use_cuda_amp = (
-            self.amp_enabled and self.device.type == "cuda" and dtype_str not in ("fp32", "float32")
-        )
+        self.use_cuda_amp = self.amp_enabled and self.device.type == "cuda" and dtype_str not in ("fp32", "float32")
         self.use_scaler = self.use_cuda_amp and self.amp_dtype == torch.float16
 
     @property
@@ -95,7 +93,7 @@ class Trainer:
         model: nn.Module,
         train_loader: DataLoader[Any],
         val_loader: DataLoader[Any],
-    ) -> None:
+    ) -> dict[str, Any]:
         configure_training_runtime_env()
         set_seed(int(self.cfg.train.seed))
 
@@ -114,9 +112,8 @@ class Trainer:
 
         try:
             if self.task == "classifier":
-                self._fit_classifier(model, train_loader, val_loader)
-            else:
-                self._fit_lm(model, train_loader, val_loader)
+                return self._fit_classifier(model, train_loader, val_loader)
+            return self._fit_lm(model, train_loader, val_loader)
         finally:
             if self.world_size > 1 and dist.is_initialized():
                 dist.destroy_process_group()
@@ -135,7 +132,7 @@ class Trainer:
         model: nn.Module,
         train_loader: DataLoader[Any],
         val_loader: DataLoader[Any],
-    ) -> None:
+    ) -> dict[str, Any]:
         cfg = self.cfg
         optim = AdamW(
             model.parameters(),
@@ -165,6 +162,8 @@ class Trainer:
             start_epoch, global_step = self._load_checkpoint(Path(str(ckpt_resume)), model, optim, sched, scaler)
 
         best_acc = 0.0
+        best_epoch = 0
+        best_metrics: dict[str, Any] = {}
         hist_ep: list[int] = []
         hist_tl: list[float] = []
         hist_va: list[float] = []
@@ -223,6 +222,8 @@ class Trainer:
 
                 if acc > best_acc:
                     best_acc = acc
+                    best_epoch = epoch + 1
+                    best_metrics = dict(val_m)
                     torch.save(self._state_dict_for_save(model), self.output_dir / "best_model.pt")
                 self._save_checkpoint(self.output_dir / "last.pt", model, optim, sched, scaler, epoch + 1, global_step)
 
@@ -230,6 +231,15 @@ class Trainer:
             save_classifier_plots(val_m, self.output_dir / "docs_assets")
             plot_loss_curve(hist_ep, hist_tl, hist_va, self.output_dir / "docs_assets" / "clf_curves.png", "val acc")
         wandb_finish()
+        return {
+            "task": "classifier",
+            "best_epoch": best_epoch,
+            "best_metric": "accuracy",
+            "best_value": best_acc,
+            "best_metrics": best_metrics,
+            "last_epoch": epochs,
+            "global_step": global_step,
+        }
 
     @torch.no_grad()
     def _eval_classifier(self, model: nn.Module, val_loader: DataLoader[Any], _loss_fn: nn.Module) -> dict[str, Any]:
@@ -254,7 +264,7 @@ class Trainer:
         model: nn.Module,
         train_loader: DataLoader[Any],
         val_loader: DataLoader[Any],
-    ) -> None:
+    ) -> dict[str, Any]:
         cfg = self.cfg
         optim = AdamW(
             model.parameters(),
@@ -281,6 +291,8 @@ class Trainer:
             start_epoch, global_step = self._load_checkpoint(Path(str(ckpt_resume)), model, optim, sched, scaler)
 
         best_val = float("inf")
+        best_epoch = 0
+        best_metrics: dict[str, Any] = {}
         hist_ep: list[int] = []
         hist_tl: list[float] = []
         hist_vl: list[float] = []
@@ -337,12 +349,23 @@ class Trainer:
 
                 if val_loss < best_val:
                     best_val = val_loss
+                    best_epoch = epoch + 1
+                    best_metrics = {"val_loss": val_loss, "val_ppl": val_ppl}
                     torch.save(self._state_dict_for_save(model), self.output_dir / "best_model.pt")
                 self._save_checkpoint(self.output_dir / "last.pt", model, optim, sched, scaler, epoch + 1, global_step)
 
         if self.is_main_process and epochs > 0:
             plot_loss_curve(hist_ep, hist_tl, hist_vl, self.output_dir / "docs_assets" / "lm_curves.png", "val loss")
         wandb_finish()
+        return {
+            "task": "lm",
+            "best_epoch": best_epoch,
+            "best_metric": "val_loss",
+            "best_value": best_val,
+            "best_metrics": best_metrics,
+            "last_epoch": epochs,
+            "global_step": global_step,
+        }
 
     def _save_checkpoint(
         self,
@@ -357,7 +380,7 @@ class Trainer:
         payload: dict[str, Any] = {
             "model": self._state_dict_for_save(model),
             "optimizer": optim.state_dict(),
-            "scheduler": sched.state_dict(),
+            "scheduler": cast(Any, sched).state_dict(),
             "epoch": epoch,
             "step": step,
         }
@@ -380,7 +403,7 @@ class Trainer:
         m = model.module if isinstance(model, DDP) else model
         m.load_state_dict(ck["model"])
         optim.load_state_dict(ck["optimizer"])
-        sched.load_state_dict(ck["scheduler"])
+        cast(Any, sched).load_state_dict(ck["scheduler"])
         if ck.get("scaler") is not None and self.use_scaler:
             scaler.load_state_dict(ck["scaler"])
         return int(ck.get("epoch", 0)), int(ck.get("step", 0))

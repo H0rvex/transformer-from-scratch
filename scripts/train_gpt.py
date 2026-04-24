@@ -14,6 +14,7 @@ from omegaconf import DictConfig, OmegaConf
 from transformer.data.tinyshakespeare import ensure_tinyshakespeare_artifacts, get_tinyshakespeare_dataloaders
 from transformer.models.gpt import GPTModel
 from transformer.training.trainer import Trainer
+from transformer.utils.artifacts import checkpoint_artifact, write_run_metadata
 
 
 def _maybe_int_or_none(cfg: DictConfig, key: str) -> int | None:
@@ -33,6 +34,7 @@ def main(cfg: DictConfig) -> None:
         Path(cfg.data.data_dir),
         vocab_size=int(cfg.data.vocab_bpe),
     )
+    OmegaConf.update(cfg, "model.vocab_size", int(vs))
 
     distributed = int(os.environ.get("WORLD_SIZE", "1")) > 1
 
@@ -63,7 +65,20 @@ def main(cfg: DictConfig) -> None:
     )
 
     trainer = Trainer(cfg, "lm", output_dir=out)
-    trainer.fit(model, train_loader, val_loader)
+    summary = trainer.fit(model, train_loader, val_loader)
+    if trainer.is_main_process:
+        write_run_metadata(
+            out,
+            task="gpt",
+            cfg=cfg,
+            artifacts={
+                "best_checkpoint": checkpoint_artifact(out / "best_model.pt"),
+                "last_checkpoint": checkpoint_artifact(out / "last.pt"),
+                "tokenizer": {"path": str(Path(cfg.data.data_dir) / "tokenizer.json"), "format": "tokenizers-json"},
+                "metrics_csv": {"path": str(out / str(cfg.train.csv_log)), "format": "csv"},
+            },
+            summary=summary,
+        )
 
 
 if __name__ == "__main__":

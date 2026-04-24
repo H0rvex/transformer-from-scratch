@@ -11,9 +11,10 @@ import torch
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
-from transformer.data.imdb import get_imdb_dataloaders
+from transformer.data.imdb import get_imdb_dataloaders, save_vocab
 from transformer.models.classifier import TransformerClassifier
 from transformer.training.trainer import Trainer
+from transformer.utils.artifacts import checkpoint_artifact, write_run_metadata
 
 
 def _maybe_int_or_none(cfg: DictConfig, key: str) -> int | None:
@@ -39,6 +40,8 @@ def main(cfg: DictConfig) -> None:
         distributed=distributed,
     )
     vs = len(vocab)
+    OmegaConf.update(cfg, "model.vocab_size", int(vs))
+    vocab_path = save_vocab(vocab, out / "vocab.json")
 
     model = TransformerClassifier(
         vocab_size=int(vs),
@@ -60,7 +63,20 @@ def main(cfg: DictConfig) -> None:
     )
 
     trainer = Trainer(cfg, "classifier", output_dir=out)
-    trainer.fit(model, train_loader, val_loader)
+    summary = trainer.fit(model, train_loader, val_loader)
+    if trainer.is_main_process:
+        write_run_metadata(
+            out,
+            task="classifier",
+            cfg=cfg,
+            artifacts={
+                "best_checkpoint": checkpoint_artifact(out / "best_model.pt"),
+                "last_checkpoint": checkpoint_artifact(out / "last.pt"),
+                "vocab": {"path": str(vocab_path), "format": "json"},
+                "metrics_csv": {"path": str(out / str(cfg.train.csv_log)), "format": "csv"},
+            },
+            summary=summary,
+        )
 
 
 if __name__ == "__main__":
