@@ -55,8 +55,7 @@ def main() -> None:
         "# RMSNorm kernel micro-benchmarks",
         "",
         f"Device: `{device}`. Mean forward time (ms) over repeated runs.",
-        "`TritonRMSNorm` matches eager "
-        ":class:`~transformer.models.norm.RMSNorm` (swap-in point for fused Triton).",
+        "`TritonRMSNorm` matches eager :class:`~transformer.models.norm.RMSNorm` (swap-in point for fused Triton).",
         "",
         "| Shape | Impl | ms |",
         "|---|---|--:|",

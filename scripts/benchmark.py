@@ -164,11 +164,7 @@ def _run_train_step_cases(
 
         ms = statistics.mean(lat)
         toks = (batch * seq) / (ms / 1000)
-        peak = (
-            torch.cuda.max_memory_allocated(device) / (1024**2)
-            if device.type == "cuda"
-            else 0.0
-        )
+        peak = torch.cuda.max_memory_allocated(device) / (1024**2) if device.type == "cuda" else 0.0
         return label, ms, toks, peak
 
     if device.type != "cuda":
@@ -239,9 +235,7 @@ def main() -> None:
     p.add_argument("--vocab", type=int, default=512)
     args = p.parse_args()
 
-    out = args.out or (
-        Path("docs/BENCHMARKS_TRAIN_STEP.md") if args.train_step else Path("docs/BENCHMARKS.md")
-    )
+    out = args.out or (Path("docs/BENCHMARKS_TRAIN_STEP.md") if args.train_step else Path("docs/BENCHMARKS.md"))
 
     if args.train_step:
         _train_step_table(args, out)

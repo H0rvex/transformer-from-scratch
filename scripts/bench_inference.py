@@ -80,9 +80,7 @@ def bench_pytorch(
         one()
         _sync()
         lat.append((time.perf_counter() - t0) * 1000)
-    peak = (
-        torch.cuda.max_memory_allocated(device) / (1024**2) if device.type == "cuda" else 0.0
-    )
+    peak = torch.cuda.max_memory_allocated(device) / (1024**2) if device.type == "cuda" else 0.0
     return lat, peak
 
 

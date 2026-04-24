@@ -5,8 +5,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
-import numpy as np
 import torch.nn.functional as F
+from numpy.typing import NDArray
 from sklearn.metrics import (
     accuracy_score,
     auc,
@@ -19,9 +19,9 @@ from torch import Tensor
 
 
 def classification_metrics(
-    y_true: np.ndarray,
-    y_score: np.ndarray,
-    y_pred: np.ndarray,
+    y_true: NDArray[Any],
+    y_score: NDArray[Any],
+    y_pred: NDArray[Any],
 ) -> dict[str, Any]:
     prec, rec, f1, _ = precision_recall_fscore_support(y_true, y_pred, average="macro", zero_division=0)
     out: dict[str, Any] = {
