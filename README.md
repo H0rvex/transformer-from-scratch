@@ -147,7 +147,7 @@ docker run --rm transformer-fs
 | `scripts/export_onnx.py` | ONNX + ORT numeric check |
 | `scripts/viz_attention.py` | Attention heatmaps → `docs/assets/attention/` |
 | `scripts/ablate.py` | Quick synthetic ablations → `docs/ABLATIONS.md` |
-| `scripts/portfolio_pipeline.sh` | Ordered train + benchmarks + ONNX + docs assets ([docs/PORTFOLIO_PIPELINE.md](docs/PORTFOLIO_PIPELINE.md)); `make portfolio-pipeline` |
+| `scripts/portfolio_pipeline.sh` | Ordered train + benchmarks + ONNX + docs assets; `make portfolio-pipeline` |
 
 ## Design choices
 
