@@ -13,6 +13,26 @@ Numbers below are from **local GTX 1060** runs (`outputs/portfolio/clf` and `out
 
 Regenerate the attention table with `python scripts/benchmark.py`. Training metrics: `outputs/portfolio/*/metrics.csv` or any Hydra `outputs/…/metrics.csv`. Train-step VRAM column comes from `docs/BENCHMARKS_TRAIN_STEP.md` (same GPU; not full `gpt_small` training peak).
 
+## Visualizations
+
+Static plots keep the README self-contained on GitHub; **avoid committing large video binaries**—record a Gradio walkthrough and host it on YouTube or attach it to a release if you want motion.
+
+**Encoder attention (synthetic demo)** — first-layer head grid from `scripts/viz_attention.py` (not a trained IMDB checkpoint):
+
+![Encoder block layer 0 — attention heads](docs/assets/attention/layer0_heads.png)
+
+**Training curves** — same portfolio GTX 1060 runs as the table above (`outputs/portfolio/…`; copies live under `docs/assets/portfolio/` for rendering here):
+
+![IMDB classifier — train loss vs val accuracy](docs/assets/portfolio/clf_curves.png)
+
+![TinyShakespeare GPT — train vs val loss](docs/assets/portfolio/lm_curves.png)
+
+**Classifier evaluation** — confusion matrix and ROC on the held-out split at the end of training:
+
+![IMDB confusion matrix](docs/assets/portfolio/confusion_matrix.png)
+
+![IMDB ROC](docs/assets/portfolio/roc.png)
+
 ## Architecture
 
 ```mermaid
