@@ -38,6 +38,14 @@ def _sync() -> None:
         torch.cuda.synchronize()
 
 
+def _cuda_inductor_ok() -> bool:
+    """``torch.compile`` on CUDA defaults to Inductor → Triton; Triton needs sm ≥ 7.0."""
+    if not torch.cuda.is_available():
+        return False
+    major, _minor = torch.cuda.get_device_capability()
+    return major >= 7
+
+
 def _percentile(xs: list[float], q: float) -> float:
     return float(np.percentile(np.array(xs, dtype=np.float64), q))
 
@@ -140,9 +148,14 @@ def main() -> None:
 
     rows: list[str] = []
     toks_approx = args.batch * args.seq
+    skipped_compile = False
 
     for compile_on in (False, True):
         label = f"pytorch_{'compile' if compile_on else 'eager'}"
+        if compile_on and cuda and not _cuda_inductor_ok():
+            rows.append("| pytorch_compile | — | — | — | — |")
+            skipped_compile = True
+            continue
         lat, peak = bench_pytorch(model, feed, device, args.repeats, args.warmup, compile_on)
         p50, p95 = _percentile(lat, 50), _percentile(lat, 95)
         tps = toks_approx / (p50 / 1000) if p50 > 0 else 0.0
@@ -172,8 +185,15 @@ def main() -> None:
         "",
         "**TensorRT:** build a `.plan` with `python scripts/build_trt_engine.py` and benchmark with NVIDIA tooling.",
         "",
-        "Regenerate: `python scripts/export_onnx.py && python scripts/bench_inference.py --kind clf`",
     ]
+    if skipped_compile:
+        cap = torch.cuda.get_device_capability()
+        footer.append(
+            f"**Note:** `pytorch_compile` is omitted (—) on this GPU: Inductor/Triton needs CUDA capability ≥ 7.0; "
+            f"device is `{cap[0]}.{cap[1]}`."
+        )
+        footer.append("")
+    footer.append("Regenerate: `python scripts/export_onnx.py && python scripts/bench_inference.py --kind clf`")
     text = "\n".join(header + rows + footer) + "\n"
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(text, encoding="utf-8")

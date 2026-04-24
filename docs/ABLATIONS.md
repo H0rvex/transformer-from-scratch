@@ -8,9 +8,9 @@ Short runs on a fixed synthetic binary dataset (CPU) to compare **pre-LN vs post
 | post_ln_sinusoidal | 0.625 |
 | pre_ln_sinusoidal | 0.375 |
 | pre_ln_learned | 0.625 |
-| pre_ln_rope | 0.625 |
+| pre_ln_rope | 1.000 |
 | pre_ln_rmsnorm | 0.375 |
 | pre_ln_swiglu | 0.625 |
-| gqa_kv2 | 0.625 |
+| gqa_kv2 | 0.875 |
 
 Regenerate: `python scripts/ablate.py`

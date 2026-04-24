@@ -23,6 +23,14 @@ def _sync() -> None:
         torch.cuda.synchronize()
 
 
+def _cuda_inductor_ok() -> bool:
+    """Default ``torch.compile`` GPU backend (Inductor) uses Triton; Triton needs CUDA capability ≥ 7.0."""
+    if not torch.cuda.is_available():
+        return False
+    major, _minor = torch.cuda.get_device_capability()
+    return major >= 7
+
+
 @torch.no_grad()
 def _attention_table(args: argparse.Namespace, out: Path) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -172,7 +180,8 @@ def _run_train_step_cases(
         if dname == "bf16" and not torch.cuda.is_bf16_supported():
             continue
         rows.append(one_case(f"{dname}_compile_off", dt, False))
-        rows.append(one_case(f"{dname}_compile_on", dt, True))
+        if _cuda_inductor_ok():
+            rows.append(one_case(f"{dname}_compile_on", dt, True))
 
     return rows
 
@@ -202,6 +211,13 @@ def _train_step_table(args: argparse.Namespace, out: Path) -> None:
     for label, ms, toks, peak in rows:
         lines.append(f"| {label} | {ms:.3f} | {toks:,.0f} | {peak:.1f} |")
     lines.append("")
+    if device.type == "cuda" and not _cuda_inductor_ok():
+        cap = torch.cuda.get_device_capability()
+        lines.append(
+            f"_No `*_compile_on` rows: Inductor uses Triton, which requires CUDA capability ≥ 7.0 "
+            f"(this GPU is `{cap[0]}.{cap[1]}`)._"
+        )
+        lines.append("")
     lines.append("Regenerate: `python scripts/benchmark.py --train-step`")
     text = "\n".join(lines) + "\n"
     out.parent.mkdir(parents=True, exist_ok=True)

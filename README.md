@@ -2,14 +2,16 @@
 
 Encoder-only **IMDB sentiment** classifier and **decoder-only GPT** on TinyShakespeare, built without Hugging Face `transformers` — multi-head attention, masks, training loop, Hydra configs, tests, ONNX export, and profiling scripts.
 
-## Results (fill after your GPU runs)
+## Results
 
-| Model | Primary metric | Params | Tokens/sec (attn bench) | Peak VRAM |
-|------|----------------|--------|-------------------------|-----------|
-| IMDB classifier | test accuracy | — | — | — |
-| TinyShakespeare GPT | val loss / PPL | — | — | — |
+Numbers below are from **local GTX 1060** runs (`outputs/portfolio/clf` and `outputs/portfolio/gpt`). GPT metrics are **best validation** (epoch 55); classifier is **best val accuracy** (epoch 10). LM loss/PPL are **per byte-level BPE token** (vocab 2048).
 
-Regenerate the attention table with `python scripts/benchmark.py`. Training metrics land under Hydra `outputs/…` as `metrics.csv`.
+| Model | Primary metric | Params | Tokens/sec (attn bench) | Peak VRAM (train-step bench) |
+|------|----------------|--------|-------------------------|------------------------------|
+| IMDB classifier | val acc **0.867** | **3.35M** | **~1.9M** | — |
+| TinyShakespeare GPT | val loss **5.29** / PPL **198** | **11.5M** | **~1.9M** | **~80 MB** (fp16, 2-layer micro-GPT in `benchmark.py --train-step`) |
+
+Regenerate the attention table with `python scripts/benchmark.py`. Training metrics: `outputs/portfolio/*/metrics.csv` or any Hydra `outputs/…/metrics.csv`. Train-step VRAM column comes from `docs/BENCHMARKS_TRAIN_STEP.md` (same GPU; not full `gpt_small` training peak).
 
 ## Architecture
 
@@ -127,6 +129,7 @@ docker run --rm transformer-fs
 | `scripts/export_onnx.py` | ONNX + ORT numeric check |
 | `scripts/viz_attention.py` | Attention heatmaps → `docs/assets/attention/` |
 | `scripts/ablate.py` | Quick synthetic ablations → `docs/ABLATIONS.md` |
+| `scripts/portfolio_pipeline.sh` | Ordered train + benchmarks + ONNX + docs assets ([docs/PORTFOLIO_PIPELINE.md](docs/PORTFOLIO_PIPELINE.md)); `make portfolio-pipeline` |
 
 ## Design choices
 

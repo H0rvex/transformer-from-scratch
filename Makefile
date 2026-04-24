@@ -1,7 +1,7 @@
 PYTHON ?= python3
 PIP ?= $(PYTHON) -m pip
 
-.PHONY: install dev lint test bench train-clf train-gpt docker-build docker-cpu ablate
+.PHONY: install dev lint test bench train-clf train-gpt docker-build docker-cpu ablate portfolio-pipeline
 
 install:
 	$(PIP) install -U pip
@@ -30,6 +30,9 @@ train-clf:
 
 train-gpt:
 	$(PYTHON) scripts/train_gpt.py
+
+portfolio-pipeline:
+	bash scripts/portfolio_pipeline.sh
 
 docker-build:
 	docker build -t transformer-fs:cuda -f Dockerfile .
