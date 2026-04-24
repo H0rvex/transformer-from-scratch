@@ -15,6 +15,20 @@ Regenerate the attention table with `python scripts/benchmark.py`. Training metr
 
 The GPT run is included primarily to demonstrate decoder architecture, training infrastructure, export, profiling, and generation plumbing. Its current TinyShakespeare quality is limited: best validation loss is above the target range in `docs/MODEL_CARD_GPT.md`, and later epochs overfit.
 
+### Ablation sanity checks
+
+These are tiny fixed synthetic binary-classification runs on CPU, intended to check architecture switches rather than claim downstream benchmark gains. Full notes and regeneration command: [docs/ABLATIONS.md](docs/ABLATIONS.md), `python scripts/ablate.py`.
+
+| Setting | Val accuracy |
+|---------|-------------:|
+| post-LN + sinusoidal positions | 0.625 |
+| pre-LN + sinusoidal positions | 0.375 |
+| pre-LN + learned positions | 0.625 |
+| pre-LN + RoPE | 1.000 |
+| pre-LN + RMSNorm | 0.375 |
+| pre-LN + SwiGLU | 0.625 |
+| GQA, 2 KV heads | 0.875 |
+
 ## Visualizations
 
 **Encoder attention (synthetic demo)** — first-layer head grid from `scripts/viz_attention.py` (not a trained IMDB checkpoint):
