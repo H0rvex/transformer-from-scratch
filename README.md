@@ -15,8 +15,6 @@ Regenerate the attention table with `python scripts/benchmark.py`. Training metr
 
 ## Visualizations
 
-Static plots keep the README self-contained on GitHub; **avoid committing large video binaries**—record a Gradio walkthrough and host it on YouTube or attach it to a release if you want motion.
-
 **Encoder attention (synthetic demo)** — first-layer head grid from `scripts/viz_attention.py` (not a trained IMDB checkpoint):
 
 ![Encoder block layer 0 — attention heads](docs/assets/attention/layer0_heads.png)
