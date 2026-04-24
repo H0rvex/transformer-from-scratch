@@ -7,18 +7,17 @@ from pathlib import Path
 import gradio as gr
 import torch
 
+from transformer.data.imdb import encode_text, load_vocab
 from transformer.data.tokenizers import load_tokenizer
 from transformer.models.classifier import TransformerClassifier
 from transformer.models.gpt import GPTModel
 
 
 def load_clf(ckpt: Path, max_len: int = 256) -> tuple[TransformerClassifier, dict[str, int]]:
-    # Minimal runtime vocab for demo: user should train with scripts/train_classifier.py
-    # Here we use a tiny placeholder vocab if ckpt-only; for real use, ship vocab.json alongside ckpt.
-    vocab: dict[str, int] = {"<pad>": 0, "<unk>": 1}
-    words = "the a movie film good bad great terrible love hate amazing worst best".split()
-    for i, w in enumerate(words, start=2):
-        vocab[w] = i
+    vocab_path = ckpt.with_name("vocab.json")
+    if not vocab_path.exists():
+        raise FileNotFoundError(f"Missing {vocab_path}; train_classifier.py now writes vocab.json beside checkpoints.")
+    vocab = load_vocab(vocab_path)
     vs = max(vocab.values()) + 1
     m = TransformerClassifier(
         vocab_size=vs,
@@ -45,16 +44,18 @@ def clf_infer(text: str, ckpt_path: str) -> str:
     ckpt = Path(ckpt_path)
     if not ckpt.exists():
         return "Checkpoint not found. Train with `python scripts/train_classifier.py` first."
-    model, vocab = load_clf(ckpt)
+    try:
+        model, vocab = load_clf(ckpt)
+    except FileNotFoundError as exc:
+        return str(exc)
     max_len = 256
-    toks = [vocab.get(w, 1) for w in text.lower().split()][:max_len]
-    toks = toks + [0] * (max_len - len(toks))
+    toks = encode_text(text, vocab, max_len)
     x = torch.tensor([toks], dtype=torch.long)
     with torch.no_grad():
         logits = model(x)
         p = torch.softmax(logits, dim=-1)[0, 1].item()
     label = "positive" if p > 0.5 else "negative"
-    return f"{label} (P(pos)={p:.3f}) — demo vocab is limited; train your own checkpoint for real IMDB performance."
+    return f"{label} (P(pos)={p:.3f})"
 
 
 def load_gpt(ckpt: Path, tok_path: Path) -> tuple[GPTModel, object]:
