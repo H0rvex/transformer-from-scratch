@@ -1,6 +1,6 @@
 # Transformer from scratch (PyTorch)
 
-Encoder-only **IMDB sentiment** classifier and **decoder-only GPT** on TinyShakespeare, built without Hugging Face `transformers` — multi-head attention, masks, training loop, Hydra configs, tests, ONNX export, and profiling scripts.
+Encoder-only **IMDB sentiment** classifier and **decoder-only GPT** on TinyShakespeare, built without Hugging Face `transformers` — multi-head attention, masks, training loop, Hydra configs, tests, ONNX export, profiling scripts, and a small synthetic trajectory sequence-modeling extension.
 
 ## Results
 
@@ -12,6 +12,8 @@ Numbers below are from **local GTX 1060** runs (`outputs/portfolio/clf` and `out
 | TinyShakespeare GPT | val loss **5.29** / PPL **198** | **11.5M** | **~1.9M** | **~80 MB** (fp16, 2-layer micro-GPT in `benchmark.py --train-step`) |
 
 Regenerate the attention table with `python scripts/benchmark.py`. Training metrics: `outputs/portfolio/*/metrics.csv` or any Hydra `outputs/…/metrics.csv`. Train-step VRAM column comes from `docs/BENCHMARKS_TRAIN_STEP.md` (same GPU; not full `gpt_small` training peak).
+
+The GPT run is included primarily to demonstrate decoder architecture, training infrastructure, export, profiling, and generation plumbing. Its current TinyShakespeare quality is limited: best validation loss is above the target range in `docs/MODEL_CARD_GPT.md`, and later epochs overfit.
 
 ## Visualizations
 
@@ -141,6 +143,8 @@ docker run --rm transformer-fs
 |--------|---------|
 | `scripts/train_classifier.py` | Hydra IMDB training |
 | `scripts/train_gpt.py` | Hydra LM training |
+| `scripts/evaluate.py` | Evaluate classifier/GPT checkpoints from `run_metadata.json` or config |
+| `scripts/train_robotics_sequence.py` | Synthetic 2D trajectory next-token task |
 | `scripts/generate.py` | Sample from GPT checkpoint |
 | `scripts/benchmark.py` | Attention forward timing → `docs/BENCHMARKS.md` |
 | `scripts/torch_profiler.py` | Chrome trace export (renamed to avoid stdlib `profile` shadowing) |
@@ -160,6 +164,10 @@ docker run --rm transformer-fs
 ## ONNX and TensorRT
 
 `python scripts/export_onnx.py` writes `docs/assets/onnx/` and checks ORT vs PyTorch logits (`atol=1e-4`). For NVIDIA deployment, compile the exported ONNX with [TensorRT](https://developer.nvidia.com/tensorrt) using the versioned CLI or `trtexec` from your TensorRT install.
+
+## Robotics sequence extension
+
+`python scripts/train_robotics_sequence.py --dry-run` trains a tiny decoder on synthetic discretized 2D trajectories. This is not a robotics benchmark; it is a CPU-friendly extension that exercises trajectory tokenization, autoregressive sequence modeling, and honest limitations. See [docs/ROBOTICS_SEQUENCE.md](docs/ROBOTICS_SEQUENCE.md).
 
 ## References
 

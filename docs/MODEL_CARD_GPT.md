@@ -22,17 +22,19 @@ Reference points for this architecture + corpus:
 | **Target for this repo** | **4.0–5.0** | **55–150** |
 | Stretch (risks overfit) | ~3.5 | ~30 |
 
-Run-specific numbers (populated after a real run from `outputs/portfolio/gpt/metrics.csv`):
+Portfolio run: `outputs/portfolio/gpt/metrics.csv`, Hydra config in `outputs/portfolio/gpt/.hydra/config.yaml`.
+Best validation loss was epoch 55.
 
 | Metric | Value |
 |--------|------:|
-| Val loss (nats) | _TBD_ |
-| Perplexity | _TBD_ |
+| Val loss (nats) | 5.2866 |
+| Perplexity | 197.66 |
 
 ## Limitations
 
 - Tiny corpus; model memorizes / fits training distribution; not a general language model.
 - Generations are stylistic pastiche only.
+- This run did not reach the target range above; the later epochs overfit and validation loss regressed.
 
 ## Ethical considerations
 

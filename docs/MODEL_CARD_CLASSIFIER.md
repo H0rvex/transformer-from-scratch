@@ -11,18 +11,20 @@ Educational and portfolio demonstration of a Transformer **encoder** trained fro
 
 ## Metrics
 
-Fill after training (Hydra output directory contains `metrics.csv` and plots):
+Portfolio run: `outputs/portfolio/clf/metrics.csv`, Hydra config in `outputs/portfolio/clf/.hydra/config.yaml`.
+Best validation accuracy was epoch 10.
 
 | Metric | Value |
 |--------|------:|
-| Test accuracy | _TBD_ |
-| Macro F1 | _TBD_ |
-| ROC-AUC | _TBD_ |
+| Test accuracy | 0.8666 |
+| Macro F1 | 0.8666 |
+| ROC-AUC | Not logged in CSV; ROC plot artifact exists at `docs/assets/portfolio/roc.png` |
 
 ## Limitations
 
 - Tokenizer is simple word splitting; not comparable to subword models used in production.
-- Demo Gradio tab uses a placeholder vocabulary unless you ship a vocabulary file consistent with your checkpoint.
+- Demo Gradio tab requires the `vocab.json` saved beside the classifier checkpoint by `scripts/train_classifier.py`.
+- Reported metric is from the Hugging Face IMDB test split used as this repo's validation split, not a separate hidden benchmark.
 
 ## Ethical considerations
 
